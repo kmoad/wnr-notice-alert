@@ -1,0 +1,6 @@
+services:
+  wnr-notice-alert:
+    build: .
+    container_name: wnr-notice-alert
+    volumes:
+    - ./data:/app/data

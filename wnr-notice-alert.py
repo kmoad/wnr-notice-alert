@@ -20,7 +20,7 @@ class YachtScoringNotice:
 
 class NoticeBoard:
 
-	_last_sent_path = Path('last-sent-notice.json')
+	_last_sent_path = Path('data/last-sent-notice.json')
 	
 	def __init__(self, yachtscoring_url: str):
 		# URL as of 2025-06-25: https://api.yachtscoring.com/v1/public/event/50166/news?isNoticeBoard_eq=true&page=1&size=10
@@ -80,7 +80,8 @@ class EmailSender:
 
 
 def main():
-	with open('config.json') as f:
+	config_path = Path('data/config.json')
+	with open(config_path) as f:
 		config = json.loads(f.read())
 	nb = NoticeBoard(config['yachtscoring_url'])
 	nb.fetch()
