@@ -1,8 +1,8 @@
 import requests
 import json
 import smtplib
+from email.message import Message
 from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr
 from datetime import datetime
 from pathlib import Path
@@ -11,12 +11,16 @@ from pathlib import Path
 class YachtScoringNotice:
 
 	def __init__(self, notice_data: dict):
-		self.notice_data = notice_data
-		self.notice_id = self.notice_data['id']
-		self.news_body = self.notice_data['newsBody']
-		self.news_subject = self.notice_data['newsSubject']
-		self.posted_dt = datetime.fromisoformat(self.notice_data['newsDateTime'])
+		self._notice_data = notice_data
+		self.notice_id = self._notice_data['id']
+		self.news_body = self._notice_data['newsBody']
+		self.news_subject = self._notice_data['newsSubject']
+		self.posted_dt = datetime.fromisoformat(self._notice_data['newsDateTime'])
 
+	def to_email(self) -> MIMEText:
+		msg = MIMEText(self.news_body, 'html')
+		msg['Subject'] = f'WNR Notice: {self.news_subject}'
+		return msg
 
 class NoticeBoard:
 
@@ -36,23 +40,23 @@ class NoticeBoard:
 	def fetch(self):
 		r = requests.get(self._yachtscoring_url)
 		r.raise_for_status()
-		notices_data = r.json()
-		for notice_data in notices_data['rows']:
+		for notice_data in r.json()['rows']:
 			self.notices.append(
 				YachtScoringNotice(notice_data)
 			)
 	
 	@property
-	def latest_is_sent(self) -> bool:
+	def new_notice_available(self) -> bool:
 		if self._last_sent_notice is None:
-			return False
+			return True
 		latest_notice = self.notices[0]
-		id_match = latest_notice.notice_id == self._last_sent_notice.notice_id
-		is_later = latest_notice.posted_dt > self._last_sent_notice.posted_dt
-		return id_match and not(is_later)
+		return \
+			latest_notice.notice_id != self._last_sent_notice.notice_id \
+			and \
+			latest_notice.posted_dt > self._last_sent_notice.posted_dt
 
 	def mark_sent(self, notice: YachtScoringNotice):
-		self._last_sent_path.write_text(json.dumps(notice.notice_data))
+		self._last_sent_path.write_text(json.dumps(notice._notice_data))
 	
 	
 class EmailSender:
@@ -64,42 +68,33 @@ class EmailSender:
 		self._from_addr = formataddr(
 			(self._sender_name, self._gmail_user)
 		)
+		self._server = smtplib.SMTP('smtp.gmail.com', 587)
+		self._server.starttls()
+		self._server.login(self._gmail_user, self._gmail_app_password)
 				  
-	def send_message(self, recipients: list[str], subject: str, body: str):
-		msg = MIMEMultipart()
+	def send_message(self, msg: Message, recipients: list[str]):
 		msg['From'] = self._from_addr
 		msg['To'] = ','.join(recipients)
-		msg['Subject'] = subject
-		msg.attach(MIMEText(body, 'html'))
-		
-		server = smtplib.SMTP('smtp.gmail.com', 587)
-		server.starttls()  # Enable encryption
-		server.login(self._gmail_user, self._gmail_app_password)
-		server.send_message(msg)
-		server.quit()
+		self._server.send_message(msg)
 
 
 def main():
 	config_path = Path('data/config.json')
-	with open(config_path) as f:
-		config = json.loads(f.read())
+	config = json.loads(config_path.read_text())
 	nb = NoticeBoard(config['yachtscoring_url'])
 	nb.fetch()
-	if nb.latest_is_sent:
-		print('No new notice')
-	else:
-		print('Sending notice')
+	if nb.new_notice_available:
 		sender = EmailSender(
 			config['gmail_user'],
 			config['gmail_app_password'],
 			config['sender_name'],
 		)
 		latest_notice = nb.notices[0]
-		subject = f'WNR Notice: {latest_notice.news_subject}'
-		body = latest_notice.news_body
-		sender.send_message(config['recipients'], subject, body)
+		sender.send_message(latest_notice.to_email(), config['recipients'], )
 		nb.mark_sent(latest_notice)
-		print('Notice sent')
+		print(f'Notice sent: {latest_notice.news_subject}')
+	else:
+		print('No new notice')
 
 if __name__ == '__main__':
 	main()
